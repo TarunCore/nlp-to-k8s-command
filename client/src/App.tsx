@@ -89,9 +89,6 @@ function App() {
           <h1 className="text-4xl font-bold text-white drop-shadow-lg mb-2">
             Kubernetes NLP Command Executor
           </h1>
-          <p className="text-blue-200">
-            Translate natural language into kubectl commands
-          </p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

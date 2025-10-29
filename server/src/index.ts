@@ -39,38 +39,33 @@ app.post("/api/execute", async (req, res): Promise<void> => {
       return;
     }
 
-    // // Step 1: Call OpenAI to translate NLP to kubectl command
-    // const completion = await openai.chat.completions.create({
-    //   model: OPENAI_MODEL,
-    //   messages: [
-    //     {
-    //       role: 'system',
-    //       content: 'You are a strict translator. Translate the user\'s plain-English Kubernetes request into a single kubectl command only. Output only the command, no extra text, no explanations, no markdown.'
-    //     },
-    //     {
-    //       role: 'user',
-    //       content: nlp
-    //     }
-    //   ],
-    //   temperature: 0.3,
-    //   max_tokens: 150
-    // });
-
-    // let kubectlCommand = completion.choices[0]?.message?.content?.trim() || '';
-
-    // if (!kubectlCommand) {
-    //   res.status(500).json({ 
-    //     error: 'Failed to generate kubectl command from OpenAI.' 
-    //   });
-    //   return;
-    // }
-
-    // // Remove "kubectl" prefix if present and clean up
-    // kubectlCommand = kubectlCommand.replace(/^kubectl\s+/, '').trim();
+    // Step 1: Call custom backend API to translate NLP to kubectl command
+    const apiUrl = `https://labile-overdevotedly-marcell.ngrok-free.dev/predict?q=${encodeURIComponent(nlp)}`;
     
-    // // Remove any markdown code blocks if present
-    // kubectlCommand = kubectlCommand.replace(/^```(?:bash|shell)?\n?/gm, '').replace(/\n?```$/gm, '').trim();
-    let kubectlCommand = "get nodes";
+    const apiResponse = await fetch(apiUrl);
+    
+    if (!apiResponse.ok) {
+      res.status(500).json({ 
+        error: `Failed to get prediction from backend. Status: ${apiResponse.status}` 
+      });
+      return;
+    }
+
+    const apiData = await apiResponse.json();
+    let kubectlCommand = apiData.output?.trim() || '';
+    console.log("kubectlCommand from backend API: "+ kubectlCommand);
+    if (!kubectlCommand) {
+      res.status(500).json({ 
+        error: 'Failed to generate kubectl command from backend API.' 
+      });
+      return;
+    }
+
+    // Remove "kubectl" prefix if present and clean up
+    kubectlCommand = kubectlCommand.replace(/^kubectl\s+/, '').trim();
+    
+    // Remove any markdown code blocks if present
+    kubectlCommand = kubectlCommand.replace(/^```(?:bash|shell)?\n?/gm, '').replace(/\n?```$/gm, '').trim();
     // Step 2: Parse and validate the command
     const args = kubectlCommand.split(/\s+/);
     const verb = args[0];
@@ -89,6 +84,7 @@ app.post("/api/execute", async (req, res): Promise<void> => {
 
     let stdout = '';
     let stderr = '';
+    let responseSent = false;
 
     kubectl.stdout.on('data', (data) => {
       stdout += data.toString();
@@ -98,18 +94,10 @@ app.post("/api/execute", async (req, res): Promise<void> => {
       stderr += data.toString();
     });
 
-    kubectl.on('close', (exitCode) => {
-      res.json({
-        command: `kubectl ${kubectlCommand}`,
-        output: stdout,
-        errorOutput: stderr,
-        exitCode: exitCode || 0
-      });
-    });
-
     // Handle timeout (30 seconds)
-    setTimeout(() => {
-      if (!kubectl.killed) {
+    const timeoutId = setTimeout(() => {
+      if (!kubectl.killed && !responseSent) {
+        responseSent = true;
         kubectl.kill();
         res.json({
           command: `kubectl ${kubectlCommand}`,
@@ -119,6 +107,19 @@ app.post("/api/execute", async (req, res): Promise<void> => {
         });
       }
     }, 30000);
+
+    kubectl.on('close', (exitCode) => {
+      clearTimeout(timeoutId);
+      if (!responseSent) {
+        responseSent = true;
+        res.json({
+          command: `kubectl ${kubectlCommand}`,
+          output: stdout,
+          errorOutput: stderr,
+          exitCode: exitCode || 0
+        });
+      }
+    });
 
   } catch (error: any) {
     console.error('Error:', error);
