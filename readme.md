@@ -1,0 +1,1 @@
+Dataset link: https://huggingface.co/datasets/ComponentSoft/k8s-kubectl-35k/viewer
